@@ -1,0 +1,463 @@
+' COIL - you against the computer (NovaBASIC)
+' A title screen, then the game. The joystick steers your snake, the
+' computer plays the other one. Same rules for both: wall or any snake
+' body = death, apple = grow. Fire = play again, START = title screen.
+' Music plays on the title screen only (see PROC PlayMusic).
+
+DIM WALL(8) BYTE = $00,$4D,$CF,$CF,$00,$53,$F3,$F3
+DIM BODY(8) BYTE = $00,$14,$55,$55,$57,$5D,$14,$00
+DIM APPLE(8) BYTE = $00,$28,$8A,$8A,$AA,$AA,$28,$00
+DIM CPUBODY(8) BYTE = $00,$3C,$FF,$FF,$FD,$F7,$3C,$00
+' tails: the oldest segment of each snake
+DIM TAILP(8) BYTE = $00,$00,$14,$14,$14,$1C,$00,$00
+DIM TAILC(8) BYTE = $00,$00,$3C,$3C,$3C,$34,$00,$00
+' heads: the newest segment of each snake (the eye is a gap in the pattern)
+DIM HEADP(8) BYTE = $00,$14,$45,$55,$55,$5D,$14,$00
+DIM HEADC(8) BYTE = $00,$3C,$CF,$FF,$FF,$F7,$3C,$00
+' sound effects: pairs of (pitch, control), one pair per frame.
+' pitch: bigger number = lower note (120 = middle C, 60 = C5, 40 = G5)
+' control: $A = pure tone, second digit = volume
+' HAPPY: two rising notes, C5 then G5 (you ate an apple)
+DIM HAPPY(24) BYTE = 60,$AA, 60,$AA, 60,$A8, 60,$A4,
+  40,$AB, 40,$AB, 40,$AA, 40,$A8, 40,$A6, 40,$A4, 40,$A2, 40,$A1
+' SAD: two falling notes, G4 then E-flat 4, fading out (CPU ate an apple)
+DIM SAD(26) BYTE = 80,$A9, 80,$A9, 80,$A8, 80,$A6, 80,$A3,
+  101,$A9, 101,$A9, 101,$A8, 101,$A7, 101,$A6, 101,$A4, 101,$A2, 101,$A1
+DIM CRASH(12) BYTE = 100,$8F, 130,$8D, 160,$8B, 190,$88, 220,$85, 250,$82
+
+' --- title screen
+' 4 animation frames of the logo tile (8 rows each): %10 = letter colour
+' (colour 1), %01 = a golden dot (colour 0) moving diagonally
+DIM SHIMMER(32) BYTE = %01101010,%10011010,%10100110,%10101001,
+  %01101010,%10011010,%10100110,%10101001,
+  %10011010,%10100110,%10101001,%01101010,
+  %10011010,%10100110,%10101001,%01101010,
+  %10100110,%10101001,%01101010,%10011010,
+  %10100110,%10101001,%01101010,%10011010,
+  %10101001,%01101010,%10011010,%10100110,
+  %10101001,%01101010,%10011010,%10100110
+' work buffer for the current frame
+DIM CURR_TILE(8) BYTE
+
+' the logo as text: 5 rows of 24 characters, 1 = a tile of the logo
+DIM LOGO(120) BYTE = ".1111...1111..1111.11...",
+  "11..11.11..11..11..11...",
+  "11.....11..11..11..11...",
+  "11..11.11..11..11..11...",
+  ".1111...1111..1111.11111"
+DIM FANFARE(12) BYTE = 60,$AA, 50,$AA, 40,$AA, 30,$AB, 25,$AC, 20,$AF
+
+' --- title music: 3 voices (channels 0-2), channel 3 stays free for SFX
+' A DIM size is 2 x the number of (note, duration) pairs. Every part
+' loops by itself, so the short parts accompany the long melody:
+'   LEAD 256 ticks = 16 bars, BASS 128 ticks (2 times), HATS 16 (16 times)
+' TEMPO 3 = 1 tick = 3 frames (4 ticks per beat = 250 BPM)
+DIM LEAD(112) BYTE = 13,4, 17,4, 20,4, 17,4, 13,4, 20,4, 25,6, 0,2,
+  22,4, 18,4, 22,4, 20,4, 17,8, 0,8,
+  18,4, 22,4, 20,4, 18,4, 17,4, 20,4, 18,4, 17,4,
+  15,4, 18,4, 20,4, 22,4, 20,12, 0,4,
+  25,4, 24,4, 22,4, 20,4, 17,4, 20,4, 25,6, 0,2,
+  22,4, 20,4, 18,4, 17,4, 20,8, 0,8,
+  18,4, 20,4, 22,4, 25,4, 24,4, 22,4, 20,4, 18,4,
+  15,4, 17,4, 18,4, 20,4, 25,12, 0,4
+' bass: root and fifth, chords C, Am, F, G (2 bars each)
+DIM BASS(64) BYTE = 1,6, 0,2, 8,6, 0,2,   1,6, 0,2, 8,6, 0,2,
+  10,6, 0,2, 5,6, 0,2,   10,6, 0,2, 5,6, 0,2,
+  6,6, 0,2, 1,6, 0,2,   6,6, 0,2, 1,6, 0,2,
+  8,6, 0,2, 3,6, 0,2,   8,6, 0,2, 3,6, 0,2
+' hi-hat: 4 hits per bar
+DIM HATS(16) BYTE = 45,1, 0,3, 45,1, 0,3, 45,1, 0,3, 45,1, 0,3
+
+' tile on the map for each snake: 2 = player, 132 = computer
+' (tile 4 + 128 draws the 11-pixels in colour 3)
+DIM TILEOF(2) = 2, 132
+' tail tile for each snake: 5 = player, 134 = computer (tile 6 + 128)
+DIM TAILOF(2) = 5, 134
+' head tile for each snake: 7 = player, 140 = computer (tile 12 + 128)
+DIM HEADOF(2) = 7, 140
+DIM STARTX(2) = 10, 29
+DIM STARTY(2) = 8, 16
+DIM STARTD(2) = 1, -1
+
+' snake data, index 0 = player, 1 = computer
+DIM HX(2), HY(2), DX(2), DY(2), HD(2), TL(2), LIVE(2), PTS(2)
+' ring buffers of body positions: snake S uses S * 512 + index
+DIM SNX(1024) BYTE
+DIM SNY(1024) BYTE
+
+HI = 0
+
+SCREEN 12
+SETCOLOR 4, 0, 0
+SETCOLOR 0, 1, 12
+SETCOLOR 1, 9, 14
+SETCOLOR 2, 1, 8
+SETCOLOR 3, 2, 8
+CHARDEF 1, WALL
+CHARDEF 2, BODY
+CHARDEF 3, APPLE
+CHARDEF 4, CPUBODY
+CHARDEF 5, TAILP
+CHARDEF 6, TAILC
+CHARDEF 7, HEADP
+CHARDEF 12, HEADC
+' NOTE: a tile number is also the screen code of a text character (tiles
+' 1-15 = the characters ! to /). TEXT must not print a character that has
+' a tile. Tiles in use: 1-7, 10-12 and 15, so texts must not contain quote,
+' hash, dollar, percent, ampersand, apostrophe, star, plus, comma or slash.
+' Tiles 8 and 9 stay free: they are the parentheses of the (C) line.
+
+DO
+  Title
+  GOTITLE = 0
+  WHILE GOTITLE = 0
+    Round
+    REPEAT
+      FRAME
+      BTN = STRIG(0)
+      STRT = CONSOL() AND 1
+    UNTIL BTN <> 0 OR STRT <> 0
+    IF STRT <> 0 THEN GOTITLE = 1
+  WEND
+LOOP
+
+' --- one round: play until a snake dies, then the GAME OVER banner
+PROC Round
+  NewGame
+  WHILE LIVE(0) = 1 AND LIVE(1) = 1
+    FOR T = 1 TO DELAY
+      GetInput
+      FRAME
+    NEXT
+    ThinkAI
+    S = 0 : MoveSnake
+    S = 1 : MoveSnake
+  WEND
+  SFX 3, CRASH
+  BannerOn
+  IF LIVE(0) = 0 AND LIVE(1) = 0
+    TEXT 18, 12, "DRAW"
+  ELSEIF LIVE(0) = 0
+    TEXT 16, 12, "YOU LOSE"
+  ELSE
+    TEXT 17, 12, "YOU WIN"
+  ENDIF
+  TEXT 11, 13, "FIRE = PLAY AGAIN"
+  TEXT 13, 14, "START = TITLE"
+  PAUSE 50
+ENDPROC
+
+PROC NewGame
+  BannerOff
+  MAPFILL 0
+  FOR X = 0 TO 39 : SETTILE X, 1, 1 : SETTILE X, 23, 1 : NEXT
+  FOR Y = 1 TO 23 : SETTILE 0, Y, 1 : SETTILE 39, Y, 1 : NEXT
+  TEXT 0, 0, "SCORE"
+  TEXT 14, 0, "CPU"
+  TEXT 28, 0, "HI"
+  DELAY = 8
+  MX = 1 : MY = 0
+  FOR S = 0 TO 1
+    B = S * 512
+    HX(S) = STARTX(S) : HY(S) = STARTY(S)
+    DX(S) = STARTD(S) : DY(S) = 0
+    TL(S) = 0 : HD(S) = 2
+    LIVE(S) = 1 : PTS(S) = 0
+    FOR I = 0 TO 2
+      XX = STARTX(S) - (2 - I) * STARTD(S)
+      SNX(B + I) = XX : SNY(B + I) = STARTY(S)
+      SETTILE XX, STARTY(S), TILEOF(S)
+    NEXT
+    SETTILE SNX(B), SNY(B), TAILOF(S)
+    SETTILE HX(S), HY(S), HEADOF(S)
+  NEXT
+  PlaceFood
+  ShowScore
+ENDPROC
+
+' --- the player: joystick, turning back on yourself is not allowed
+PROC GetInput
+  JX = JOYX(0) : JY = JOYY(0)
+  IF JX <> 0 AND MX = 0
+    DX(0) = JX : DY(0) = 0
+  ELSEIF JY <> 0 AND MY = 0
+    DX(0) = 0 : DY(0) = JY
+  ENDIF
+ENDPROC
+
+' --- the computer (snake 1)
+' 1. head for the apple (along the longer distance first)
+' 2. if that way is blocked, turn to the side where it is free
+' 3. nothing free at all: go straight on (and crash)
+PROC ThinkAI
+  FOUND = 0
+  AX = SGN(FX - HX(1)) : AY = SGN(FY - HY(1))
+  IF ABS(FX - HX(1)) >= ABS(FY - HY(1))
+    CX = AX : CY = 0 : TryDir
+    CX = 0 : CY = AY : TryDir
+  ELSE
+    CX = 0 : CY = AY : TryDir
+    CX = AX : CY = 0 : TryDir
+  ENDIF
+  IF RAND(2) = 0
+    CX = DY(1) : CY = -DX(1) : TryDir
+    CX = -DY(1) : CY = DX(1) : TryDir
+  ELSE
+    CX = -DY(1) : CY = DX(1) : TryDir
+    CX = DY(1) : CY = -DX(1) : TryDir
+  ENDIF
+  CX = DX(1) : CY = DY(1) : TryDir
+ENDPROC
+
+' tries direction (CX, CY) for the computer: takes it if the field is
+' empty or an apple, and only if no earlier try was successful
+PROC TryDir
+  IF FOUND = 1 THEN RETURN
+  IF CX = 0 AND CY = 0 THEN RETURN
+  K = GETTILE(HX(1) + CX, HY(1) + CY)
+  IF K = 0 OR K = 3
+    DX(1) = CX : DY(1) = CY
+    FOUND = 1
+  ENDIF
+ENDPROC
+
+' --- one step of snake S (the same code for both snakes)
+PROC MoveSnake
+  IF S = 0 THEN MX = DX(0) : MY = DY(0)
+  B = S * 512
+  NX = HX(S) + DX(S) : NY = HY(S) + DY(S)
+  K = GETTILE(NX, NY)
+  IF K <> 3
+    ' no apple: the tail moves on
+    SETTILE SNX(B + TL(S)), SNY(B + TL(S)), 0
+    TL(S) = (TL(S) + 1) AND 511
+    SETTILE SNX(B + TL(S)), SNY(B + TL(S)), TAILOF(S)
+    K = GETTILE(NX, NY)
+  ENDIF
+  IF K <> 0 AND K <> 3 THEN LIVE(S) = 0 : RETURN
+  SETTILE HX(S), HY(S), TILEOF(S)
+  HX(S) = NX : HY(S) = NY
+  HD(S) = (HD(S) + 1) AND 511
+  SNX(B + HD(S)) = NX : SNY(B + HD(S)) = NY
+  SETTILE NX, NY, HEADOF(S)
+  IF K = 3
+    PTS(S) = PTS(S) + 1
+    IF PTS(0) > HI THEN HI = PTS(0)
+    IF S = 0 THEN SFX 3, HAPPY ELSE SFX 3, SAD
+    IF (PTS(0) + PTS(1)) MOD 4 = 0 AND DELAY > 3 THEN DELAY = DELAY - 1
+    PlaceFood
+    ShowScore
+  ENDIF
+ENDPROC
+
+PROC PlaceFood
+  REPEAT
+    FX = 1 + RAND(38)
+    FY = 2 + RAND(21)
+  UNTIL GETTILE(FX, FY) = 0
+  SETTILE FX, FY, 3
+ENDPROC
+
+PROC ShowScore
+  NROW = 0
+  V = PTS(0) : NCOL = 6 : DrawNum
+  V = PTS(1) : NCOL = 18 : DrawNum
+  V = HI : NCOL = 31 : DrawNum
+ENDPROC
+
+PROC DrawNum
+  FOR P = 3 TO 0 STEP -1
+    SETTILE NCOL + P, NROW, 16 + V MOD 10
+    V = V / 10
+  NEXT
+ENDPROC
+
+' Sets the mode of map row ROWN: RMODE = 2 (text) or 4 (tiles).
+' The instruction of row r sits at $9403 + 3 * r; $40 = "load address".
+PROC RowMode
+  POKE $9403 + 3 * ROWN, $40 + RMODE
+ENDPROC
+
+' GAME OVER banner: rows 12-14 become text lines. The tiles in these rows
+' are cleared first, as mode 2 would show them as odd characters.
+PROC BannerOn
+  FOR R = 12 TO 14
+    FOR X = 0 TO 39 : SETTILE X, R, 0 : NEXT
+    ROWN = R : RMODE = 2 : RowMode
+  NEXT
+ENDPROC
+
+' back to normal tile rows (harmless when they already are)
+PROC BannerOff
+  FOR R = 12 TO 14
+    ROWN = R : RMODE = 4 : RowMode
+  NEXT
+ENDPROC
+
+' Sets the mode of map rows FR to LR (RMODE = 2 text, 4 tiles).
+PROC RowsMode
+  FOR R = FR TO LR
+    ROWN = R : RowMode
+  NEXT
+ENDPROC
+
+' title screen: row 0 and the banner rows are tiles, rows 16-20 are text
+PROC TitleModes
+  RMODE = 4
+  FR = 0 : LR = 0 : RowsMode
+  FR = 12 : LR = 14 : RowsMode
+  RMODE = 2
+  FR = 16 : LR = 20 : RowsMode
+ENDPROC
+
+' game: rows 16-20 are tiles again, row 0 is the text line of the score
+PROC GameModes
+  RMODE = 4
+  FR = 16 : LR = 20 : RowsMode
+  RMODE = 2
+  FR = 0 : LR = 0 : RowsMode
+ENDPROC
+
+' --- the title screen: logo with shimmer, blinking text, fire starts
+PROC Title
+  MAPFILL 0
+  TitleModes
+  TEXT 10, 16, "THE DUEL: YOU VS CPU"
+  TEXT 10, 17, "PRESS FIRE TO START"
+  TEXT 13, 18, "HI-SCORE"
+  NROW = 18 : NCOL = 22 : V = HI : DrawNum
+  TEXT 9, 19, "(C) 2026 KAMIL SOBCZAK"
+  TEXT 5, 20, "CODED WITH HELP FROM CLAUDE.AI"
+  FRAME_ANIM = 0 : ShimmerFrame
+  DrawLogo
+  HP = 99 : LN = 3 : RETR = 0 : LONGEST = 30 : SNK = 0
+  TitleApple
+  PlayMusic
+  TIMER = 0 : BLINK = 1 : SPEED_ANIM = 0
+  DO
+    TIMER = TIMER + 1
+    IF TIMER >= 25
+      TIMER = 0
+      BLINK = 1 - BLINK
+      IF BLINK = 1
+        TEXT 10, 17, "PRESS FIRE TO START"
+      ELSE
+        TEXT 10, 17, "                   "
+      ENDIF
+    ENDIF
+    SPEED_ANIM = SPEED_ANIM + 1
+    IF SPEED_ANIM >= 3
+      SPEED_ANIM = 0
+      FRAME_ANIM = (FRAME_ANIM + 1) MOD 4
+      ShimmerFrame
+    ENDIF
+    SNK = SNK + 1
+    IF SNK >= 4
+      SNK = 0
+      SnakeStep
+    ENDIF
+    FRAME
+    IF STRIG(0) THEN EXIT
+  LOOP
+  MSTOP
+  SFX 3, FANFARE
+  PAUSE 25
+  MAPFILL 0
+  GameModes
+ENDPROC
+
+' copies the 8 bytes of the current frame and redefines the logo tile 15
+PROC ShimmerFrame
+  FOR B = 0 TO 7
+    CURR_TILE(B) = SHIMMER(FRAME_ANIM * 8 + B)
+  NEXT
+  CHARDEF 15, CURR_TILE
+ENDPROC
+
+PROC DrawLogo
+  FOR Y = 0 TO 4
+    FOR X = 0 TO 23
+      IF LOGO(Y * 24 + X) = ASC("1") THEN SETTILE 8 + X, 6 + Y, 15
+    NEXT
+  NEXT
+ENDPROC
+
+' --- the snake on the title screen
+' The frame is a closed loop of 116 fields, numbered clockwise from the
+' top-left corner: 0-37 top row, 38-57 right side, 58-95 bottom row,
+' 96-115 left side. A snake is just a head field HP and a length LN: the
+' body lies on the fields behind the head, so no buffers are needed.
+' Fields in rows 16-20 are hidden behind the text rows: nothing is drawn.
+PROC PathXY
+  IF PP < 38
+    PX = 1 + PP : PY = 1
+  ELSEIF PP < 58
+    PX = 38 : PY = PP - 36
+  ELSEIF PP < 96
+    PX = 96 - PP : PY = 22
+  ELSE
+    PX = 1 : PY = 117 - PP
+  ENDIF
+ENDPROC
+
+' draws tile TT on field PP (unless it is hidden behind the text rows)
+PROC DrawCell
+  PathXY
+  IF PY < 16 OR PY > 20 THEN SETTILE PX, PY, TT
+ENDPROC
+
+' a new apple 8 to 32 fields ahead of the head, never behind the text rows
+PROC TitleApple
+  REPEAT
+    AP = (HP + 8 + RAND(25)) MOD 116
+    PP = AP : PathXY
+  UNTIL PY < 16 OR PY > 20
+  TT = 3 : DrawCell
+ENDPROC
+
+' one step: the snake walks on and grows by the apples. Once it is
+' LONGEST long and its head gets behind the text rows, the head stops and
+' the tail walks in (RETR = 1) until only the head is left. Then a short
+' snake starts again behind the left text rows.
+PROC SnakeStep
+  TP = (HP + 117 - LN) MOD 116
+  IF RETR = 1
+    PP = TP : TT = 0 : DrawCell
+    LN = LN - 1
+    IF LN <= 1
+      LN = 3 : HP = 99 : RETR = 0
+    ELSE
+      PP = (TP + 1) MOD 116 : TT = 5 : DrawCell
+    ENDIF
+    RETURN
+  ENDIF
+  NP = (HP + 1) MOD 116
+  PP = HP : TT = 2 : DrawCell
+  IF NP = AP
+    LN = LN + 1
+    TitleApple
+  ELSE
+    PP = TP : TT = 0 : DrawCell
+    PP = (TP + 1) MOD 116 : TT = 5 : DrawCell
+  ENDIF
+  HP = NP
+  PP = HP : TT = 7 : DrawCell
+  IF LN >= LONGEST
+    PathXY
+    IF PY >= 16 AND PY <= 20 THEN RETR = 1
+  ENDIF
+ENDPROC
+
+' starts the title music from the beginning (called by every title screen)
+PROC PlayMusic
+  TEMPO 3
+  ' voice 0: pure tone, volume 9, decay 4
+  VOICE 0, 10, 9, 4
+  ' voice 1: buzzy bass (distortion 12), volume 10, decay 6
+  VOICE 1, 12, 10, 6
+  ' voice 2: noise (distortion 8), volume 6, fast decay
+  VOICE 2, 8, 6, 1
+  MUSIC 0, LEAD
+  MUSIC 1, BASS
+  MUSIC 2, HATS
+ENDPROC
