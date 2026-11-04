@@ -15,7 +15,7 @@ A dynamic two-snake duel (player vs. CPU) for 8-bit Atari computers.
 ## Technical Information and Acknowledgments
 The game was written and compiled entirely in **NovaBASIC**, 
 created by **Mateusz Materzok**.
-Project repository: https://github.com/MaterzokMateusz/NovaBasic
+Project repository: https://github.com/MaterzokMateusz/NovaBasic/releases
 
 Game author: Kamil Sobczak (2026)
 The source code and the XEX executable file are made available under the MIT License
