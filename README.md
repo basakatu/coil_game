@@ -8,7 +8,7 @@ A dynamic two-snake duel (player vs. CPU) for 8-bit Atari computers.
 * Joystick in Port 1
 
 ## Controls
-* **Joystick (Port 1):** control the green snake
+* **Joystick (Port 1):** control the orange snake
 * **FIRE button:** start the game / restart after a round
 * **START (on the console):** return to the title screen while saving your high score
 
